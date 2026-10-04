@@ -1,6 +1,6 @@
 module github.com/xtls/xray-core
 
-go 1.27
+go 1.27.1
 
 require (
 	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e
@@ -48,16 +48,23 @@ require (
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/koron/go-ssdp v0.0.4 // indirect
 	github.com/libp2p/go-netroute v0.2.1 // indirect
+	github.com/metacubex/age v0.0.0-20260603010618-28d156b4ea78 // indirect
+	github.com/metacubex/hkdf v0.1.0 // indirect
+	github.com/metacubex/hpke v0.1.0 // indirect
+	github.com/metacubex/mlkem v0.1.0 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/transport/v4 v4.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	github.com/xtls/libxray v1.260930.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/tools v0.50.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
