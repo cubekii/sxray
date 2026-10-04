@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -26,7 +27,7 @@ import (
 )
 
 var cmdRun = &base.Command{
-	UsageLine: "{{.Exec}} run [-c config.json] [-confdir dir] [-k link]",
+	UsageLine: "{{.Exec}} run [-c config.json] [-confdir dir] [-k link] [-m mode]",
 	Short:     "Run Xray with config, the default command",
 	Long: `
 Run Xray with config, the default command.
@@ -43,6 +44,14 @@ Multiple assign is accepted.
 
 The -keysecret=secret flag sets the Age identity to decrypt an encrypted
 share link or subscription. Only needed with -key.
+
+The -mode=mode, -m=mode flags add a local inbound to the generated config:
+  tun    TUN device, routes the whole system through the share link
+  socks  SOCKS5 proxy on 127.0.0.1:10808
+  http   HTTP proxy on 127.0.0.1:10809
+Multiple assign is accepted, e.g. "run -k link -m tun -m socks".
+Without -mode only the outbounds are generated, with no inbound.
+Only works with -key.
 
 The -format=json flag sets the format of config files.
 Default "auto".
@@ -68,6 +77,7 @@ var (
 	configDir   string
 	keyLinks    cmdarg.Arg // "Share link or subscription for Xray.", the option is customed type, parse in main
 	keySecret   string
+	keyModes    cmdarg.Arg // "Local inbound for Xray.", the option is customed type, parse in main
 	dump        = cmdRun.Flag.Bool("dump", false, "Dump merged config only, without launching Xray server.")
 	test        = cmdRun.Flag.Bool("test", false, "Test config file only, without launching Xray server.")
 	format      = cmdRun.Flag.String("format", "auto", "Format of input file.")
@@ -79,9 +89,11 @@ var (
 		cmdRun.Flag.Var(&configFiles, "config", "Config path for Xray.")
 		cmdRun.Flag.Var(&configFiles, "c", "Short alias of -config")
 		cmdRun.Flag.StringVar(&configDir, "confdir", "", "A dir with multiple json config")
-		cmdRun.Flag.Var(&keyLinks, "key", "Share link or subscription for Xray.")
+		cmdRun.Flag.Var(&keyLinks, "key", "Share link for Xray.")
 		cmdRun.Flag.Var(&keyLinks, "k", "Short alias of -key")
 		cmdRun.Flag.StringVar(&keySecret, "keysecret", "", "Age identity to decrypt an encrypted share link.")
+		cmdRun.Flag.Var(&keyModes, "mode", "Local inbound of the generated config: tun, socks, http.")
+		cmdRun.Flag.Var(&keyModes, "m", "Short alias of -mode")
 
 		return true
 	}()
@@ -217,11 +229,127 @@ func getConfigFormat() string {
 	return f
 }
 
-// getConfigFromKeys converts share links into an Xray config kept in memory.
-func getConfigFromKeys() (*core.Config, error) {
+const (
+	keySocksListen = "127.0.0.1"
+	keySocksPort   = 10808
+	keyHTTPPort    = 10809
+)
+
+// tunInbound returns a TUN inbound routing the whole system through the
+// outbounds of the generated config.
+func tunInbound() map[string]any {
+	settings := map[string]any{
+		"mtu":                    1500,
+		"autoSystemRoutingTable": []string{"0.0.0.0/0", "::/0"},
+	}
+	switch runtime.GOOS {
+	case "windows":
+		settings["dns"] = []string{"1.1.1.1", "8.8.8.8"}
+		settings["autoSystemWfpBlockLeak"] = []string{"dns", "misconfigtun"}
+	case "linux":
+		settings["gateway"] = []string{"10.0.0.1/24"}
+		settings["autoSystemDnsToGateway"] = true
+	}
+	return map[string]any{
+		"tag":      "tun",
+		"protocol": "tun",
+		"settings": settings,
+	}
+}
+
+func socksInbound() map[string]any {
+	return map[string]any{
+		"tag":      "socks",
+		"listen":   keySocksListen,
+		"port":     keySocksPort,
+		"protocol": "socks",
+		"settings": map[string]any{
+			"auth": "noauth",
+			"udp":  true,
+			"ip":   keySocksListen,
+		},
+	}
+}
+
+func httpInbound() map[string]any {
+	return map[string]any{
+		"tag":      "http",
+		"listen":   keySocksListen,
+		"port":     keyHTTPPort,
+		"protocol": "http",
+		"settings": map[string]any{},
+	}
+}
+
+// getKeyInbounds turns the modes into inbound objects.
+func getKeyInbounds(modes cmdarg.Arg) ([]map[string]any, error) {
+	var inbounds []map[string]any
+	for _, mode := range modes {
+		switch strings.ToLower(mode) {
+		case "tun":
+			inbounds = append(inbounds, tunInbound())
+		case "socks", "socks5":
+			inbounds = append(inbounds, socksInbound())
+		case "http", "https":
+			inbounds = append(inbounds, httpInbound())
+		default:
+			return nil, errors.New("unknown mode: ", mode, ", expected tun, socks or http")
+		}
+	}
+	return inbounds, nil
+}
+
+// getKeyConfigJSON converts the share links into an Xray config, kept in memory,
+// with the inbounds of the modes added.
+func getKeyConfigJSON() (json.RawMessage, error) {
 	raw, err := share.ConvertShareLinksToXrayJson(strings.Join(keyLinks, "\n"), keySecret)
 	if err != nil {
 		return nil, errors.New("failed to convert share link").Base(err)
+	}
+
+	inbounds, err := getKeyInbounds(keyModes)
+	if err != nil {
+		return nil, err
+	}
+	if len(inbounds) == 0 {
+		return raw, nil
+	}
+
+	document := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, errors.New("failed to parse generated config").Base(err)
+	}
+	var existing []json.RawMessage
+	if len(document["inbounds"]) > 0 {
+		if err := json.Unmarshal(document["inbounds"], &existing); err != nil {
+			return nil, errors.New("failed to parse generated inbounds").Base(err)
+		}
+	}
+	for _, inbound := range inbounds {
+		encoded, err := json.Marshal(inbound)
+		if err != nil {
+			return nil, errors.New("failed to generate inbound").Base(err)
+		}
+		existing = append(existing, encoded)
+	}
+	encodedInbounds, err := json.Marshal(existing)
+	if err != nil {
+		return nil, errors.New("failed to generate inbounds").Base(err)
+	}
+	document["inbounds"] = encodedInbounds
+
+	merged, err := json.Marshal(document)
+	if err != nil {
+		return nil, errors.New("failed to generate config").Base(err)
+	}
+	return merged, nil
+}
+
+// getConfigFromKeys converts share links into an Xray config kept in memory.
+func getConfigFromKeys() (*core.Config, error) {
+	raw, err := getKeyConfigJSON()
+	if err != nil {
+		return nil, err
 	}
 	c, err := serial.DecodeJSONConfig(bytes.NewReader(raw))
 	if err != nil {
@@ -232,9 +360,9 @@ func getConfigFromKeys() (*core.Config, error) {
 
 func dumpConfig() int {
 	if len(keyLinks) > 0 {
-		raw, err := share.ConvertShareLinksToXrayJson(strings.Join(keyLinks, "\n"), keySecret)
+		raw, err := getKeyConfigJSON()
 		if err != nil {
-			fmt.Println(errors.New("failed to convert share link").Base(err))
+			fmt.Println(err)
 			time.Sleep(1 * time.Second)
 			return 23
 		}
@@ -259,6 +387,8 @@ func startXray() (core.Server, error) {
 
 	if len(keyLinks) > 0 {
 		c, err = getConfigFromKeys()
+	} else if len(keyModes) > 0 {
+		return nil, errors.New("no share link to route, modes need the -key flag")
 	} else {
 		configFiles := getConfigFilePath(true)
 		c, err = core.LoadConfig(getConfigFormat(), configFiles)
