@@ -93,8 +93,5 @@ jobs:
           path: resources
           key: xray-geodat-
           enableCrossOsArchive: true
-      - name: Fetch missing Geodat
-        shell: bash
-        run: bash .github/scripts/fetch-assets.sh geodat
       - name: Test
         run: go test -timeout 1h -v ./...

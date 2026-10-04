@@ -130,39 +130,21 @@ jobs:
           path: resources
           key: xray-wintun-
 
-      - name: Fetch missing Geodat
-        run: bash .github/scripts/fetch-assets.sh geodat
-
-      - name: Fetch missing Wintun
-        run: bash .github/scripts/fetch-assets.sh wintun
-
       - name: Add additional assets into package
         run: |
-          shopt -s nullglob
-          GEODAT=(resources/geo*.dat)
-          if [ ${#GEODAT[@]} -eq 0 ]; then
-            echo "::error::GeoIP/GeoSite assets are missing"
-            exit 1
-          fi
-          cp -f "${GEODAT[@]}" build_assets/
+          mv -f resources/geo* build_assets/
           if [[ ${GOOS} == 'windows' ]]; then
             cp .github/build/windows/* build_assets/
+          fi
+          if [[ ${GOOS} == 'windows' ]]; then
             echo 'Adding Wintun into packages'
-            case ${GOARCH} in
-              amd64) WINTUN_ARCH=amd64 ;;
-              386) WINTUN_ARCH=x86 ;;
-              arm64) WINTUN_ARCH=arm64 ;;
-              *) WINTUN_ARCH='' ;;
-            esac
-            if [[ -n ${WINTUN_ARCH} ]]; then
-              WINTUN_DLL="resources/wintun/bin/${WINTUN_ARCH}/wintun.dll"
-              if [[ ! -s ${WINTUN_DLL} ]]; then
-                echo "::error::${WINTUN_DLL} is missing"
-                exit 1
-              fi
-              cp ${WINTUN_DLL} build_assets/
+            if [[ ${GOARCH} == 'amd64' ]]; then
+              mv resources/wintun/bin/amd64/wintun.dll build_assets/
             fi
-            cp resources/wintun/LICENSE.txt build_assets/LICENSE-Wintun
+            if [[ ${GOARCH} == '386' ]]; then
+              mv resources/wintun/bin/x86/wintun.dll build_assets/
+            fi
+            mv resources/wintun/LICENSE.txt build_assets/LICENSE-Wintun
           fi
 
       - name: Copy README.md & LICENSE
