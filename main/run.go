@@ -27,7 +27,7 @@ import (
 )
 
 var cmdRun = &base.Command{
-	UsageLine: "{{.Exec}} run [-c config.json] [-confdir dir] [-k link] [-m mode]",
+	UsageLine: "{{.Exec}} run [-c config.json] [-confdir dir] [-k link] [-m mode] [-listen addr]",
 	Short:     "Run Xray with config, the default command",
 	Long: `
 Run Xray with config, the default command.
@@ -52,6 +52,10 @@ The -mode=mode, -m=mode flags add a local inbound to the generated config:
 Multiple assign is accepted, e.g. "run -k link -m tun -m socks".
 Without -mode only the outbounds are generated, with no inbound.
 Only works with -key.
+
+The -listen=addr flag sets the listen address for the socks and http
+modes. Default "127.0.0.1". Use "0.0.0.0" to accept connections from
+other hosts, e.g. when running inside a container.
 
 The -format=json flag sets the format of config files.
 Default "auto".
@@ -78,6 +82,7 @@ var (
 	keyLinks    cmdarg.Arg // "Share link or subscription for Xray.", the option is customed type, parse in main
 	keySecret   string
 	keyModes    cmdarg.Arg // "Local inbound for Xray.", the option is customed type, parse in main
+	keyListen   = cmdRun.Flag.String("listen", keyLocalListen, "Listen address for the socks and http modes.")
 	dump        = cmdRun.Flag.Bool("dump", false, "Dump merged config only, without launching Xray server.")
 	test        = cmdRun.Flag.Bool("test", false, "Test config file only, without launching Xray server.")
 	format      = cmdRun.Flag.String("format", "auto", "Format of input file.")
@@ -230,7 +235,7 @@ func getConfigFormat() string {
 }
 
 const (
-	keySocksListen = "127.0.0.1"
+	keyLocalListen = "127.0.0.1"
 	keySocksPort   = 10808
 	keyHTTPPort    = 10809
 )
@@ -258,23 +263,26 @@ func tunInbound() map[string]any {
 }
 
 func socksInbound() map[string]any {
+	settings := map[string]any{
+		"auth": "noauth",
+		"udp":  true,
+	}
+	if *keyListen != "" && *keyListen != "0.0.0.0" && *keyListen != "::" {
+		settings["ip"] = *keyListen
+	}
 	return map[string]any{
 		"tag":      "socks",
-		"listen":   keySocksListen,
+		"listen":   *keyListen,
 		"port":     keySocksPort,
 		"protocol": "socks",
-		"settings": map[string]any{
-			"auth": "noauth",
-			"udp":  true,
-			"ip":   keySocksListen,
-		},
+		"settings": settings,
 	}
 }
 
 func httpInbound() map[string]any {
 	return map[string]any{
 		"tag":      "http",
-		"listen":   keySocksListen,
+		"listen":   *keyListen,
 		"port":     keyHTTPPort,
 		"protocol": "http",
 		"settings": map[string]any{},
