@@ -1,0 +1,81 @@
+name: Test Build Xray
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test ./...
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Build xray
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            EXT=".exe"
+          fi
+          go build -o xray${EXT} -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags "-s -w -buildid=" ./main
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: xray-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: xray${{ matrix.goos == 'windows' && '.exe' || '' }}
+          if-no-files-found: error
