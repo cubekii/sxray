@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +59,9 @@ The -listen=addr flag sets the listen address for the socks and http
 modes. Default "127.0.0.1". Use "0.0.0.0" to accept connections from
 other hosts, e.g. when running inside a container.
 
+The -socks-port=port and -http-port=port flags set the local ports of
+the socks and http modes. Default 10808 and 10809.
+
 The following environment variables set defaults for the run command.
 Flags always take precedence over environment variables.
 
@@ -65,6 +69,8 @@ Flags always take precedence over environment variables.
   XRAY_KEY           Same as -key, multiple share links separated by newline
   XRAY_ROUTE_MODE    Same as -mode, multiple modes separated by newline or comma
   XRAY_LISTEN_ADDR   Same as -listen
+  XRAY_SOCKS_PORT    Same as -socks-port
+  XRAY_HTTP_PORT     Same as -http-port
 
 The -format=json flag sets the format of config files.
 Default "auto".
@@ -86,15 +92,17 @@ func init() {
 }
 
 var (
-	configFiles cmdarg.Arg // "Config file for Xray.", the option is customed type, parse in main
-	configDir   string
-	keyLinks    cmdarg.Arg // "Share link or subscription for Xray.", the option is customed type, parse in main
-	keySecret   string
-	keyModes    cmdarg.Arg // "Local inbound for Xray.", the option is customed type, parse in main
-	keyListen   = cmdRun.Flag.String("listen", keyLocalListen, "Listen address for the socks and http modes.")
-	dump        = cmdRun.Flag.Bool("dump", false, "Dump merged config only, without launching Xray server.")
-	test        = cmdRun.Flag.Bool("test", false, "Test config file only, without launching Xray server.")
-	format      = cmdRun.Flag.String("format", "auto", "Format of input file.")
+	configFiles  cmdarg.Arg // "Config file for Xray.", the option is customed type, parse in main
+	configDir    string
+	keyLinks     cmdarg.Arg // "Share link or subscription for Xray.", the option is customed type, parse in main
+	keySecret    string
+	keyModes     cmdarg.Arg // "Local inbound for Xray.", the option is customed type, parse in main
+	keyListen    = cmdRun.Flag.String("listen", keyLocalListen, "Listen address for the socks and http modes.")
+	keySocksPort = cmdRun.Flag.Int("socks-port", keyDefaultSocksPort, "Port of the socks mode inbound.")
+	keyHTTPPort  = cmdRun.Flag.Int("http-port", keyDefaultHTTPPort, "Port of the http mode inbound.")
+	dump         = cmdRun.Flag.Bool("dump", false, "Dump merged config only, without launching Xray server.")
+	test         = cmdRun.Flag.Bool("test", false, "Test config file only, without launching Xray server.")
+	format       = cmdRun.Flag.String("format", "auto", "Format of input file.")
 
 	/* We have to do this here because Golang's Test will also need to parse flag, before
 	 * main func in this file is run.
@@ -129,6 +137,18 @@ func applyEnvDefaults() {
 			*keyListen = v
 		}
 	}
+	if !fromCommandLine["socks-port"] {
+		if err := setPortFromEnv("XRAY_SOCKS_PORT", keySocksPort); err != nil {
+			fmt.Println("Failed to start:", err)
+			os.Exit(23)
+		}
+	}
+	if !fromCommandLine["http-port"] {
+		if err := setPortFromEnv("XRAY_HTTP_PORT", keyHTTPPort); err != nil {
+			fmt.Println("Failed to start:", err)
+			os.Exit(23)
+		}
+	}
 	if !fromCommandLine["config"] && !fromCommandLine["c"] {
 		for _, p := range splitNonEmpty(os.Getenv("XRAY_CONFIG_PATH"), "\n") {
 			configFiles.Set(p)
@@ -144,6 +164,21 @@ func applyEnvDefaults() {
 			keyModes.Set(m)
 		}
 	}
+}
+
+// setPortFromEnv reads a port number from the named environment variable
+// and stores it into port. Empty values keep the current (default) port.
+func setPortFromEnv(name string, port *int) error {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return nil
+	}
+	p, err := strconv.Atoi(v)
+	if err != nil || p < 1 || p > 65535 {
+		return errors.New("invalid ", name, ": ", v, ", expected a port number between 1 and 65535")
+	}
+	*port = p
+	return nil
 }
 
 // splitNonEmpty splits s by the given separators and returns the
@@ -299,9 +334,9 @@ func getConfigFormat() string {
 }
 
 const (
-	keyLocalListen = "127.0.0.1"
-	keySocksPort   = 10808
-	keyHTTPPort    = 10809
+	keyLocalListen      = "127.0.0.1"
+	keyDefaultSocksPort = 10808
+	keyDefaultHTTPPort  = 10809
 )
 
 // tunInbound returns a TUN inbound routing the whole system through the
@@ -337,7 +372,7 @@ func socksInbound() map[string]any {
 	return map[string]any{
 		"tag":      "socks",
 		"listen":   *keyListen,
-		"port":     keySocksPort,
+		"port":     *keySocksPort,
 		"protocol": "socks",
 		"settings": settings,
 	}
@@ -347,7 +382,7 @@ func httpInbound() map[string]any {
 	return map[string]any{
 		"tag":      "http",
 		"listen":   *keyListen,
-		"port":     keyHTTPPort,
+		"port":     *keyHTTPPort,
 		"protocol": "http",
 		"settings": map[string]any{},
 	}
