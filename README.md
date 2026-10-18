@@ -1,6 +1,6 @@
 # SXRAY
 
-### simple example
+### minimal example
 ```yaml
 xray:
   image: ghcr.io/cubekii/sxray:1.21
