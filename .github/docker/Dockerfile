@@ -63,4 +63,3 @@ ARG TZ=Etc/UTC
 ENV TZ=$TZ
 
 ENTRYPOINT [ "/usr/local/bin/xray" ]
-CMD [ "-confdir", "/usr/local/etc/xray/" ]

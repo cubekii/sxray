@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -57,6 +58,14 @@ The -listen=addr flag sets the listen address for the socks and http
 modes. Default "127.0.0.1". Use "0.0.0.0" to accept connections from
 other hosts, e.g. when running inside a container.
 
+The following environment variables set defaults for the run command.
+Flags always take precedence over environment variables.
+
+  XRAY_CONFIG_PATH   Same as -config, multiple paths separated by newline
+  XRAY_KEY           Same as -key, multiple share links separated by newline
+  XRAY_ROUTE_MODE    Same as -mode, multiple modes separated by newline or comma
+  XRAY_LISTEN_ADDR   Same as -listen
+
 The -format=json flag sets the format of config files.
 Default "auto".
 
@@ -104,7 +113,62 @@ var (
 	}()
 )
 
+// applyEnvDefaults fills the unset run flags from the XRAY_* environment
+// variables. Flags passed on the command line always take precedence.
+// The -listen flag can't be detected by value (it has a default), so the
+// parsed flag set is consulted instead.
+func applyEnvDefaults() {
+	fromCommandLine := make(map[string]bool)
+	cmdRun.Flag.Visit(func(f *flag.Flag) {
+		fromCommandLine[f.Name] = true
+	})
+	listenSet := fromCommandLine["listen"]
+
+	if !listenSet {
+		if v := strings.TrimSpace(os.Getenv("XRAY_LISTEN_ADDR")); v != "" {
+			*keyListen = v
+		}
+	}
+	if !fromCommandLine["config"] && !fromCommandLine["c"] {
+		for _, p := range splitNonEmpty(os.Getenv("XRAY_CONFIG_PATH"), "\n") {
+			configFiles.Set(p)
+		}
+	}
+	if !fromCommandLine["key"] && !fromCommandLine["k"] {
+		for _, l := range splitNonEmpty(os.Getenv("XRAY_KEY"), "\n") {
+			keyLinks.Set(l)
+		}
+	}
+	if !fromCommandLine["mode"] && !fromCommandLine["m"] {
+		for _, m := range splitNonEmpty(os.Getenv("XRAY_ROUTE_MODE"), "\n", ",") {
+			keyModes.Set(m)
+		}
+	}
+}
+
+// splitNonEmpty splits s by the given separators and returns the
+// trimmed non-empty parts, or nil if there are none.
+func splitNonEmpty(s string, seps ...string) []string {
+	parts := []string{s}
+	for _, sep := range seps {
+		var next []string
+		for _, p := range parts {
+			next = append(next, strings.Split(p, sep)...)
+		}
+		parts = next
+	}
+	var out []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func executeRun(cmd *base.Command, args []string) {
+	applyEnvDefaults()
+
 	if *dump {
 		clog.ReplaceWithSeverityLogger(clog.Severity_Warning)
 		errCode := dumpConfig()
